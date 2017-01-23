@@ -1,6 +1,13 @@
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
-from tensorflow.contrib.rnn import LSTMCell, LSTMStateTuple, GRUCell
+
+try:
+    from tensorflow.contrib.rnn import LSTMCell, LSTMStateTuple, GRUCell
+except ImportError:
+    LSTMCell = tf.nn.rnn_cell.LSTMCell
+    LSTMStateTuple = tf.nn.rnn_cell.LSTMStateTuple
+    GRUCell = tf.nn.rnn_cell.GRUCell
+
 import data_util
 
 

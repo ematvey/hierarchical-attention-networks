@@ -150,26 +150,33 @@ checkpoint_path = os.path.join(data_dir, 'checkpoints', 'checkpoint.chpt')
 def train():
   di = DataIterator()
   import tensorflow as tf
-  from tensorflow.contrib.rnn import GRUCell, MultiRNNCell
+  try:
+    from tensorflow.contrib.rnn import GRUCell, MultiRNNCell
+  except ImportError:
+    MultiRNNCell = tf.nn.rnn_cell.MultiRNNCell
+    GRUCell = tf.nn.rnn_cell.GRUCell
   import model
   tf.reset_default_graph()
   cell = GRUCell(64)
   cell = MultiRNNCell([cell]*4)
-  with tf.Session() as s:
-    model = model.TextClassifierModel(vocab_size=50000, embedding_size=200, classes=5,
-                                      word_cell=cell, sentence_cell=cell,
-                                      word_output_size=100, sentence_output_size=100)
-    saver = tf.train.Saver(tf.global_variables())
-    s.run(tf.global_variables_initializer())
-    for i in range(1000):
-      x, y = di.train_batch(40)
-      y = [e-1 for e in y]
-      fd = model.get_feed_data(x, y)
-      loss, _ = s.run([model.loss, model.train_op], fd)
-      if i % 1 == 0:
-        print(loss)
-      if i % 10 == 0:
-        saver.save(s, checkpoint_path)
+  try:
+    with tf.Session() as s:
+      model = model.TextClassifierModel(vocab_size=50000, embedding_size=200, classes=5,
+                                        word_cell=cell, sentence_cell=cell,
+                                        word_output_size=100, sentence_output_size=100)
+      saver = tf.train.Saver(tf.global_variables())
+      s.run(tf.global_variables_initializer())
+      for i in range(100000):
+        x, y = di.train_batch(40)
+        y = [e-1 for e in y]
+        fd = model.get_feed_data(x, y)
+        loss, _ = s.run([model.loss, model.train_op], fd)
+        if i % 1 == 0:
+          print(loss)
+        if i % 10 == 0:
+          saver.save(s, checkpoint_path)
+  except KeyboardInterrupt:
+    pass
 
   import IPython
   IPython.embed()
