@@ -1,6 +1,7 @@
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
 from tensorflow.contrib.rnn import LSTMCell, LSTMStateTuple, GRUCell
+import data_util
 
 
 def bidirectional_rnn(cell_fw, cell_bw, inputs_embedded, input_lengths,
@@ -17,15 +18,27 @@ def bidirectional_rnn(cell_fw, cell_bw, inputs_embedded, input_lengths,
                                             sequence_length=input_lengths,
                                             dtype=tf.float32))
         outputs = tf.concat_v2((fw_outputs, fw_outputs), 2)
-        if isinstance(fw_state, LSTMStateTuple):
-            state_c = tf.concat_v2(
-                (fw_state.c, bw_state.c), 1, name='bidirectional_concat_c')
-            state_h = tf.concat_v2(
-                (fw_state.h, bw_state.h), 1, name='bidirectional_concat_h')
-            state = LSTMStateTuple(c=state_c, h=state_h)
-        elif isinstance(fw_state, tf.Tensor):
-            state = tf.concat_v2((fw_state, bw_state), 1,
-                                 name='bidirectional_concat')
+
+        def concatenate_state(fw_state, bw_state):
+            if isinstance(fw_state, LSTMStateTuple):
+                state_c = tf.concat_v2(
+                    (fw_state.c, bw_state.c), 1, name='bidirectional_concat_c')
+                state_h = tf.concat_v2(
+                    (fw_state.h, bw_state.h), 1, name='bidirectional_concat_h')
+                state = LSTMStateTuple(c=state_c, h=state_h)
+            elif isinstance(fw_state, tf.Tensor):
+                state = tf.concat_v2((fw_state, bw_state), 1,
+                                    name='bidirectional_concat')
+            elif (isinstance(fw_state, tuple) and
+                    isinstance(bw_state, tuple) and
+                    len(fw_state) == len(bw_state)):
+                # multilayer
+                state = tuple(concatenate_state(fw, bw) for fw, bw in zip(fw_state, bw_state))
+
+            else:
+                raise ValueError('unknown state type: {}'.format((fw_state,bw_state)))
+
+        state = concatenate_state(fw_state, bw_state)
         return outputs, state
 
 
@@ -80,9 +93,7 @@ class TextClassifierModel():
                  word_cell=GRUCell(10),
                  sentence_cell=GRUCell(10),
                  word_output_size=10,
-                 sentence_output_size=10,
-                 debug=False):
-        self.debug = debug
+                 sentence_output_size=10):
         self.vocab_size = vocab_size
         self.embedding_size = embedding_size
         self.classes = classes
@@ -91,10 +102,7 @@ class TextClassifierModel():
         self.sentence_cell = sentence_cell
         self.sentence_output_size = sentence_output_size
 
-        if self.debug:
-            self._init_inputs_debug()
-        else:
-            self._init_inputs()
+        self._init_inputs()
 
         (self.document_size,
          self.sentence_size,
@@ -116,27 +124,6 @@ class TextClassifierModel():
 
         # [document]
         self.labels = tf.placeholder(shape=(None,), dtype=tf.int32)
-
-    def _init_inputs_debug(self):
-        self.inputs = tf.constant([[
-            [5, 4, 1, 0],
-            [3, 3, 6, 7],
-            [6, 7, 0, 0]
-        ],
-            [
-            [2, 2, 1, 0],
-            [3, 3, 6, 7],
-            [0, 0, 0, 0]
-        ]], dtype=tf.int32)
-
-        self.word_lengths = tf.constant([
-            [3, 4, 2],
-            [3, 4, 0],
-        ], dtype=tf.int32)
-
-        self.sentence_lengths = tf.constant([3, 2], dtype=tf.int32)
-
-        self.labels = tf.constant([0, 1], dtype=tf.int32)
 
     def _init_embedding(self):
         with tf.variable_scope("Embedding") as scope:
@@ -192,13 +179,42 @@ class TextClassifierModel():
                 labels=self.labels, logits=self.logits))
             self.train_op = tf.train.AdamOptimizer().minimize(self.loss)
 
+    def get_feed_data(self, x, y=None):
+        x_m, doc_sizes, sent_sizes = data_util.batch(x)
+        fd = {
+            self.inputs: x_m,
+            self.sentence_lengths: doc_sizes,
+            self.word_lengths: sent_sizes,
+        }
+        if y is not None:
+            fd[self.labels] = y
+        return fd
+
 
 if __name__ == '__main__':
     tf.reset_default_graph()
-    session = tf.InteractiveSession()
+    with tf.Session() as session:
+        model = TextClassifierModel()
+        session.run(tf.global_variables_initializer())
 
-    model = TextClassifierModel(debug=True)
-    session.run(tf.global_variables_initializer())
+        fd = {
+            model.inputs: [[
+                [5, 4, 1, 0],
+                [3, 3, 6, 7],
+                [6, 7, 0, 0]
+            ],
+                [
+                [2, 2, 1, 0],
+                [3, 3, 6, 7],
+                [0, 0, 0, 0]
+            ]],
+            model.word_lengths: [
+                [3, 4, 2],
+                [3, 4, 0],
+            ],
+            model.sentence_lengths: [3, 2],
+            model.labels: [0, 1],
+        }
 
-    print(model.logits.eval())
-    session.run(model.train_op)
+        print(session.run(model.logits, fd))
+        session.run(model.train_op, fd)
