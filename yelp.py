@@ -1,5 +1,24 @@
-import ujson
 import os
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("mode", choices=['make_data', 'train', 'model_lab'])
+parser.add_argument("--train-dir", default=os.path.expanduser('~/yelp-cache'), dest='train_dir')
+parser.add_argument("--yelp-review-file", dest='review_path')
+parser.add_argument("--checkpoint-freq", type=int, dest='checkpoint_frequency', default=100)
+parser.add_argument("--batch-size", type=int, dest='batch_size', default=10)
+args = parser.parse_args()
+
+review_path = args.review_path
+train_dir = args.train_dir
+checkpoint_frequency = args.checkpoint_frequency
+
+train_fn = os.path.join(train_dir, 'train_set.pickle')
+dev_fn = os.path.join(train_dir, 'dev_set.pickle')
+test_fn = os.path.join(train_dir, 'test_set.pickle')
+
+tflog_dir = os.path.join(train_dir, 'tflog')
+
+import ujson
 import spacy
 import pickle
 import random
@@ -8,15 +27,13 @@ from collections import defaultdict
 import numpy as np
 from data_util import batch
 
-import argparse
-parser = argparse.ArgumentParser()
-parser.add_argument("mode", choices=['make_data', 'train'])
-parser.add_argument("--data-dir", dest='data_dir', default=os.path.join(os.path.abspath('.'), 'data'))
-parser.add_argument("--yelp-review-file", dest='review_path')
-args = parser.parse_args()
-
-review_path = args.review_path
-data_dir = args.data_dir
+import tensorflow as tf
+try:
+  from tensorflow.contrib.rnn import GRUCell, MultiRNNCell
+except ImportError:
+  MultiRNNCell = tf.nn.rnn_cell.MultiRNNCell
+  GRUCell = tf.nn.rnn_cell.GRUCell
+import model
 
 if args.mode == 'make_data':
   en = spacy.load('en')
@@ -28,7 +45,7 @@ def read_reviews():
       yield ujson.loads(line)
 
 def build_word_frequency_distribution(fn='word_freq.pickle'):
-  path = os.path.join(data_dir, fn)
+  path = os.path.join(train_dir, fn)
   try:
     with open(path, 'rb') as vocab_file:
       vocab = pickle.load(vocab_file)
@@ -50,7 +67,7 @@ def build_word_frequency_distribution(fn='word_freq.pickle'):
   return vocab
 
 def build_vocabulary(lower=3, n=50000, fn='vocab.pickle'):
-  path = os.path.join(data_dir, fn)
+  path = os.path.join(train_dir, fn)
   try:
     with open(path, 'rb') as vocab_file:
       vocab = pickle.load(vocab_file)
@@ -69,21 +86,13 @@ def build_vocabulary(lower=3, n=50000, fn='vocab.pickle'):
     pickle.dump(vocab, vocab_file)
   return vocab
 
-train_fn = 'train_set.pickle'
-dev_fn = 'dev_set.pickle'
-test_fn = 'test_set.pickle'
-
-train_path = os.path.join(data_dir, train_fn)
-dev_path = os.path.join(data_dir, dev_fn)
-test_path = os.path.join(data_dir, test_fn)
-
 UNKNOWN = 2
 def make_data(split_points=(0.8, 0.9)):
   train_ratio, dev_ratio = split_points
   vocab = build_vocabulary()
-  train_f = open(train_path, 'wb')
-  dev_f = open(dev_path, 'wb')
-  test_f = open(test_path, 'wb')
+  train_f = open(train_fn, 'wb')
+  dev_f = open(dev_fn, 'wb')
+  test_f = open(test_fn, 'wb')
 
   try:
     for review in tqdm(read_reviews()):
@@ -110,18 +119,18 @@ def make_data(split_points=(0.8, 0.9)):
 
 class DataIterator():
   def __init__(self):
-    self.train_f = open(train_path, 'rb')
-    self.dev_f = open(dev_path, 'rb')
-    self.test_f = open(test_path, 'rb')
+    self.train_f = open(train_fn, 'rb')
+    self.dev_f = open(dev_fn, 'rb')
+    self.test_f = open(test_fn, 'rb')
   def _rotate_train(self):
     self.train_f.close()
-    self.train_f = open(train_path, 'rb')
+    self.train_f = open(train_fn, 'rb')
   def _rotate_dev(self):
     self.dev_f.close()
-    self.dev_f = open(dev_path, 'rb')
+    self.dev_f = open(dev_fn, 'rb')
   def _rotate_test(self):
     self.test_f.close()
-    self.test_f = open(test_path, 'rb')
+    self.test_f = open(test_fn, 'rb')
   def _next_n(self, n, f, rotate_fn):
     x = []
     y = []
@@ -145,38 +154,48 @@ class DataIterator():
     self.dev_f.close()
     self.test_f.close()
 
-checkpoint_path = os.path.join(data_dir, 'checkpoints', 'checkpoint.chpt')
+checkpoint_name = 'yelp-model'
+checkpoint_dir = os.path.join(train_dir, 'checkpoints')
+checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
+
+def create_model():
+  cell = GRUCell(64)
+  cell = MultiRNNCell([cell]*4)
+  return model.TextClassifierModel(
+    vocab_size=50000, embedding_size=200, classes=5,
+    word_cell=cell, sentence_cell=cell,
+    word_output_size=100, sentence_output_size=100)
 
 def train():
   di = DataIterator()
-  import tensorflow as tf
-  try:
-    from tensorflow.contrib.rnn import GRUCell, MultiRNNCell
-  except ImportError:
-    MultiRNNCell = tf.nn.rnn_cell.MultiRNNCell
-    GRUCell = tf.nn.rnn_cell.GRUCell
-  import model
   tf.reset_default_graph()
-  cell = GRUCell(64)
-  cell = MultiRNNCell([cell]*4)
+  m = create_model()
   try:
     with tf.Session() as s:
-      model = model.TextClassifierModel(vocab_size=50000, embedding_size=200, classes=5,
-                                        word_cell=cell, sentence_cell=cell,
-                                        word_output_size=100, sentence_output_size=100)
       saver = tf.train.Saver(tf.global_variables())
-      s.run(tf.global_variables_initializer())
+      summary_writer = tf.summary.FileWriter(tflog_dir)
+      checkpoint = tf.train.get_checkpoint_state(checkpoint_dir)
+      if checkpoint:
+        print("Reading model parameters from %s" % checkpoint_path)
+        saver.restore(s, checkpoint_path)
+      else:
+        print("Created model with fresh parameters")
+        s.run(tf.global_variables_initializer())
       for i in range(100000):
-        x, y = di.train_batch(40)
+        x, y = di.train_batch(args.batch_size)
         y = [e-1 for e in y]
-        fd = model.get_feed_data(x, y)
-        loss, _ = s.run([model.loss, model.train_op], fd)
+        fd = m.get_feed_data(x, y)
+        summaries, loss, _ = s.run([m.summary_op, m.loss, m.train_op], fd)
+        summary_writer.add_summary(summaries)
         if i % 1 == 0:
           print(loss)
-        if i % 10 == 0:
+        if i != 0 and i % checkpoint_frequency == 0:
+          print('checkpoint')
           saver.save(s, checkpoint_path)
   except KeyboardInterrupt:
     pass
+  except Exception as e:
+    print("error: {}".format(e))
 
   import IPython
   IPython.embed()
@@ -186,6 +205,12 @@ def main():
     make_data()
   elif args.mode == 'train':
     train()
+  elif args.mode == 'model_lab':
+    tf.reset_default_graph()
+    s = tf.InteractiveSession()
+    m = create_model()
+    import IPython
+    IPython.embed()
 
 if __name__ == '__main__':
   main()

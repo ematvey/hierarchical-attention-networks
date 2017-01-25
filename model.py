@@ -14,7 +14,7 @@ import data_util
 def bidirectional_rnn(cell_fw, cell_bw, inputs_embedded, input_lengths,
                       scope=None):
     """Bidirecional RNN with concatenated outputs and states"""
-    with tf.variable_scope(scope or "BidirectionalRNN") as scope:
+    with tf.variable_scope(scope or "birnn") as scope:
         ((fw_outputs,
           bw_outputs),
          (fw_state,
@@ -23,7 +23,8 @@ def bidirectional_rnn(cell_fw, cell_bw, inputs_embedded, input_lengths,
                                             cell_bw=cell_bw,
                                             inputs=inputs_embedded,
                                             sequence_length=input_lengths,
-                                            dtype=tf.float32))
+                                            dtype=tf.float32,
+                                            scope=scope))
         outputs = tf.concat_v2((fw_outputs, fw_outputs), 2)
 
         def concatenate_state(fw_state, bw_state):
@@ -69,7 +70,7 @@ def task_specific_attention(inputs, output_size,
     assert len(inputs.get_shape()) == 3 and inputs.get_shape(
     )[-1].value is not None
 
-    with tf.variable_scope(scope or 'Attention') as scope:
+    with tf.variable_scope(scope or 'attention') as scope:
         attention_context_vector = tf.get_variable(name='attention_context_vector',
                                                    shape=[output_size],
                                                    initializer=initializer,
@@ -100,7 +101,9 @@ class TextClassifierModel():
                  word_cell=GRUCell(10),
                  sentence_cell=GRUCell(10),
                  word_output_size=10,
-                 sentence_output_size=10):
+                 sentence_output_size=10,
+                 max_grad_norm=5.0,
+                 scope=None):
         self.vocab_size = vocab_size
         self.embedding_size = embedding_size
         self.classes = classes
@@ -108,83 +111,99 @@ class TextClassifierModel():
         self.word_output_size = word_output_size
         self.sentence_cell = sentence_cell
         self.sentence_output_size = sentence_output_size
+        self.max_grad_norm = max_grad_norm
 
-        self._init_inputs()
+        with tf.variable_scope(scope or 'tcm') as scope:
+            self._init_inputs(scope)
 
-        (self.document_size,
-         self.sentence_size,
-         self.word_size) = tf.unstack(tf.shape(self.inputs))
+            (self.document_size,
+            self.sentence_size,
+            self.word_size) = tf.unstack(tf.shape(self.inputs))
 
-        self._init_embedding()
-        self._init_body()
-        self._init_training()
+            self._init_embedding(scope)
+            self._init_body(scope)
 
-    def _init_inputs(self):
-        # [document x sentence x word]
-        self.inputs = tf.placeholder(shape=(None, None, None), dtype=tf.int32)
-
-        # [document x sentence]
-        self.word_lengths = tf.placeholder(shape=(None, None), dtype=tf.int32)
-
-        # [document]
-        self.sentence_lengths = tf.placeholder(shape=(None,), dtype=tf.int32)
-
-        # [document]
-        self.labels = tf.placeholder(shape=(None,), dtype=tf.int32)
-
-    def _init_embedding(self):
-        with tf.variable_scope("Embedding") as scope:
-            self.embedding_matrix = tf.get_variable(
-                name="embedding_matrix",
-                shape=[self.vocab_size, self.embedding_size],
-                initializer=layers.xavier_initializer(),
-                dtype=tf.float32)
-            self.inputs_embedded = layers.embedding_lookup_unique(
-                self.embedding_matrix, self.inputs)
-
-    def _init_body(self):
-        word_level_inputs = tf.reshape(self.inputs_embedded, [
-            self.document_size * self.sentence_size,
-            self.word_size,
-            self.embedding_size
-        ])
-        word_level_lengths = tf.reshape(
-            self.word_lengths, [self.document_size * self.sentence_size])
-
-        with tf.variable_scope('Word') as scope:
-            word_encoder_output, _ = bidirectional_rnn(
-                self.word_cell, self.word_cell,
-                word_level_inputs, word_level_lengths,
-                scope=scope)
-
-            with tf.variable_scope('Attention') as scope:
-                word_level_output = task_specific_attention(
-                    word_encoder_output,
-                    self.word_output_size,
-                    scope=scope)
-
-        # sentence_level
-
-        sentence_inputs = tf.reshape(
-            word_level_output, [self.document_size, self.sentence_size, self.word_output_size])
-
-        with tf.variable_scope('Sentence') as scope:
-            sentence_encoder_output, _ = bidirectional_rnn(
-                self.sentence_cell, self.sentence_cell, sentence_inputs, self.sentence_lengths, scope=scope)
-
-            with tf.variable_scope('Attention') as scope:
-                sentence_level_output = task_specific_attention(
-                    sentence_encoder_output, self.sentence_output_size, scope=scope)
-
-        with tf.variable_scope('Classifier'):
-            self.logits = layers.fully_connected(
-                sentence_level_output, self.classes, activation_fn=None)
-
-    def _init_training(self):
-        with tf.variable_scope('Training'):
+        with tf.variable_scope('train'):
             self.loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
                 labels=self.labels, logits=self.logits))
-            self.train_op = tf.train.AdamOptimizer().minimize(self.loss)
+
+            tf.summary.scalar('loss', self.loss)
+
+            tvars = tf.trainable_variables()
+
+            grads, global_norm = tf.clip_by_global_norm(tf.gradients(self.loss, tvars), self.max_grad_norm)
+            tf.summary.scalar('global_grad_norm', global_norm)
+
+            opt = tf.train.AdamOptimizer(1e-4)
+
+            self.train_op = opt.apply_gradients(zip(grads, tvars), name='train_op')
+
+            self.summary_op = tf.summary.merge_all()
+
+    def _init_inputs(self, scope):
+        with tf.variable_scope(scope) as scope:
+            # [document x sentence x word]
+            self.inputs = tf.placeholder(shape=(None, None, None), dtype=tf.int32)
+
+            # [document x sentence]
+            self.word_lengths = tf.placeholder(shape=(None, None), dtype=tf.int32)
+
+            # [document]
+            self.sentence_lengths = tf.placeholder(shape=(None,), dtype=tf.int32)
+
+            # [document]
+            self.labels = tf.placeholder(shape=(None,), dtype=tf.int32)
+
+    def _init_embedding(self, scope):
+        with tf.variable_scope(scope):
+            with tf.variable_scope("embedding") as scope:
+                self.embedding_matrix = tf.get_variable(
+                    name="embedding_matrix",
+                    shape=[self.vocab_size, self.embedding_size],
+                    initializer=layers.xavier_initializer(),
+                    dtype=tf.float32)
+                self.inputs_embedded = layers.embedding_lookup_unique(
+                    self.embedding_matrix, self.inputs)
+
+    def _init_body(self, scope):
+        with tf.variable_scope(scope):
+
+            word_level_inputs = tf.reshape(self.inputs_embedded, [
+                self.document_size * self.sentence_size,
+                self.word_size,
+                self.embedding_size
+            ])
+            word_level_lengths = tf.reshape(
+                self.word_lengths, [self.document_size * self.sentence_size])
+
+            with tf.variable_scope('word') as scope:
+                word_encoder_output, _ = bidirectional_rnn(
+                    self.word_cell, self.word_cell,
+                    word_level_inputs, word_level_lengths,
+                    scope=scope)
+
+                with tf.variable_scope('attention') as scope:
+                    word_level_output = task_specific_attention(
+                        word_encoder_output,
+                        self.word_output_size,
+                        scope=scope)
+
+            # sentence_level
+
+            sentence_inputs = tf.reshape(
+                word_level_output, [self.document_size, self.sentence_size, self.word_output_size])
+
+            with tf.variable_scope('sentence') as scope:
+                sentence_encoder_output, _ = bidirectional_rnn(
+                    self.sentence_cell, self.sentence_cell, sentence_inputs, self.sentence_lengths, scope=scope)
+
+                with tf.variable_scope('attention') as scope:
+                    sentence_level_output = task_specific_attention(
+                        sentence_encoder_output, self.sentence_output_size, scope=scope)
+
+            with tf.variable_scope('classifier'):
+                self.logits = layers.fully_connected(
+                    sentence_level_output, self.classes, activation_fn=None)
 
     def get_feed_data(self, x, y=None):
         x_m, doc_sizes, sent_sizes = data_util.batch(x)
