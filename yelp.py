@@ -92,13 +92,13 @@ def train():
   di = DataIterator()
   tf.reset_default_graph()
   m = create_model()
-  try:
-    config = tf.ConfigProto()
-    config.log_device_placement = True
-    config.allow_soft_placement = True
-    config.gpu_options.allow_growth = True
+  with tf.Session(config=config) as s:
+    try:
+      config = tf.ConfigProto()
+      config.log_device_placement = True
+      config.allow_soft_placement = True
+      config.gpu_options.allow_growth = True
 
-    with tf.Session(config=config) as s:
       saver = tf.train.Saver(tf.global_variables())
       summary_writer = tf.summary.FileWriter(tflog_dir)
       checkpoint = tf.train.get_checkpoint_state(checkpoint_dir)
@@ -119,13 +119,15 @@ def train():
         if i != 0 and i % checkpoint_frequency == 0:
           print('checkpoint')
           saver.save(s, checkpoint_path)
-  except KeyboardInterrupt:
-    pass
-  except Exception as e:
-    print("error: {}".format(e))
+    except KeyboardInterrupt:
+      print('saving...')
+      saver.save(s, checkpoint_path)
+      pass
+    except Exception as e:
+      print("error: {}".format(e))
 
-  import IPython
-  IPython.embed()
+    import IPython
+    IPython.embed()
 
 def main():
   if args.mode == 'make_data':
