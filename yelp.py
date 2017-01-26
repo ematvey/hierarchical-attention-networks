@@ -6,6 +6,7 @@ parser.add_argument("--train-dir", default=os.path.expanduser('~/yelp-cache'), d
 parser.add_argument("--yelp-review-file", dest='review_path')
 parser.add_argument("--checkpoint-freq", type=int, dest='checkpoint_frequency', default=100)
 parser.add_argument("--batch-size", type=int, dest='batch_size', default=10)
+parser.add_argument("--device", default="/cpu:0")
 args = parser.parse_args()
 
 review_path = args.review_path
@@ -159,19 +160,26 @@ checkpoint_dir = os.path.join(train_dir, 'checkpoints')
 checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
 
 def create_model():
-  cell = GRUCell(64)
-  cell = MultiRNNCell([cell]*4)
+  cell = GRUCell(80)
+  cell = MultiRNNCell([cell]*5)
   return model.TextClassifierModel(
-    vocab_size=50000, embedding_size=200, classes=5,
+    vocab_size=50000, embedding_size=300, classes=5,
     word_cell=cell, sentence_cell=cell,
-    word_output_size=100, sentence_output_size=100)
+    word_output_size=100, sentence_output_size=100, device=args.device,
+    max_grad_norm=5.0, dropout_keep_proba=0.5,
+    )
 
 def train():
   di = DataIterator()
   tf.reset_default_graph()
   m = create_model()
   try:
-    with tf.Session() as s:
+    config = tf.ConfigProto()
+    config.log_device_placement = True
+    config.allow_soft_placement = True
+    config.gpu_options.allow_growth = True
+
+    with tf.Session(config=config) as s:
       saver = tf.train.Saver(tf.global_variables())
       summary_writer = tf.summary.FileWriter(tflog_dir)
       checkpoint = tf.train.get_checkpoint_state(checkpoint_dir)
@@ -186,7 +194,7 @@ def train():
         y = [e-1 for e in y]
         fd = m.get_feed_data(x, y)
         summaries, loss, _ = s.run([m.summary_op, m.loss, m.train_op], fd)
-        summary_writer.add_summary(summaries)
+        summary_writer.add_summary(summaries, global_step=i)
         if i % 1 == 0:
           print(loss)
         if i != 0 and i % checkpoint_frequency == 0:

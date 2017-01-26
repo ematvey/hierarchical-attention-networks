@@ -24,6 +24,7 @@ def bidirectional_rnn(cell_fw, cell_bw, inputs_embedded, input_lengths,
                                             inputs=inputs_embedded,
                                             sequence_length=input_lengths,
                                             dtype=tf.float32,
+                                            swap_memory=True,
                                             scope=scope))
         outputs = tf.concat_v2((fw_outputs, fw_outputs), 2)
 
@@ -95,14 +96,16 @@ class TextClassifierModel():
         (https://www.cs.cmu.edu/~diyiy/docs/naacl16.pdf)"""
 
     def __init__(self,
-                 vocab_size=10,
-                 embedding_size=5,
-                 classes=2,
-                 word_cell=GRUCell(10),
-                 sentence_cell=GRUCell(10),
-                 word_output_size=10,
-                 sentence_output_size=10,
-                 max_grad_norm=5.0,
+                 vocab_size,
+                 embedding_size,
+                 classes,
+                 word_cell,
+                 sentence_cell,
+                 word_output_size,
+                 sentence_output_size,
+                 max_grad_norm,
+                 dropout_keep_proba,
+                 device='/cpu:0',
                  scope=None):
         self.vocab_size = vocab_size
         self.embedding_size = embedding_size
@@ -112,16 +115,19 @@ class TextClassifierModel():
         self.sentence_cell = sentence_cell
         self.sentence_output_size = sentence_output_size
         self.max_grad_norm = max_grad_norm
+        self.dropout_keep_proba = dropout_keep_proba
 
         with tf.variable_scope(scope or 'tcm') as scope:
             self._init_inputs(scope)
 
             (self.document_size,
-            self.sentence_size,
-            self.word_size) = tf.unstack(tf.shape(self.inputs))
+                self.sentence_size,
+                self.word_size) = tf.unstack(tf.shape(self.inputs))
 
             self._init_embedding(scope)
-            self._init_body(scope)
+
+            with tf.device(device):
+                self._init_body(scope)
 
         with tf.variable_scope('train'):
             self.loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
@@ -142,17 +148,20 @@ class TextClassifierModel():
 
     def _init_inputs(self, scope):
         with tf.variable_scope(scope) as scope:
+
+            self.is_training = tf.placeholder(dtype=tf.bool, name='is_training')
+
             # [document x sentence x word]
-            self.inputs = tf.placeholder(shape=(None, None, None), dtype=tf.int32)
+            self.inputs = tf.placeholder(shape=(None, None, None), dtype=tf.int32, name='inputs')
 
             # [document x sentence]
-            self.word_lengths = tf.placeholder(shape=(None, None), dtype=tf.int32)
+            self.word_lengths = tf.placeholder(shape=(None, None), dtype=tf.int32, name='word_lengths')
 
             # [document]
-            self.sentence_lengths = tf.placeholder(shape=(None,), dtype=tf.int32)
+            self.sentence_lengths = tf.placeholder(shape=(None,), dtype=tf.int32, name='sentence_lengths')
 
             # [document]
-            self.labels = tf.placeholder(shape=(None,), dtype=tf.int32)
+            self.labels = tf.placeholder(shape=(None,), dtype=tf.int32, name='labels')
 
     def _init_embedding(self, scope):
         with tf.variable_scope(scope):
@@ -188,6 +197,12 @@ class TextClassifierModel():
                         self.word_output_size,
                         scope=scope)
 
+                with tf.variable_scope('dropout'):
+                    word_level_output = layers.dropout(
+                        word_level_output, keep_prob=self.dropout_keep_proba,
+                        is_training=self.is_training,
+                    )
+
             # sentence_level
 
             sentence_inputs = tf.reshape(
@@ -200,6 +215,12 @@ class TextClassifierModel():
                 with tf.variable_scope('attention') as scope:
                     sentence_level_output = task_specific_attention(
                         sentence_encoder_output, self.sentence_output_size, scope=scope)
+
+                with tf.variable_scope('dropout'):
+                    sentence_level_output = layers.dropout(
+                        sentence_level_output, keep_prob=self.dropout_keep_proba,
+                        is_training=self.is_training,
+                    )
 
             with tf.variable_scope('classifier'):
                 self.logits = layers.fully_connected(
@@ -214,16 +235,28 @@ class TextClassifierModel():
         }
         if y is not None:
             fd[self.labels] = y
+            fd[self.is_training] = True
         return fd
 
 
 if __name__ == '__main__':
     tf.reset_default_graph()
     with tf.Session() as session:
-        model = TextClassifierModel()
+        model = TextClassifierModel(
+            vocab_size=10,
+            embedding_size=5,
+            classes=2,
+            word_cell=GRUCell(10),
+            sentence_cell=GRUCell(10),
+            word_output_size=10,
+            sentence_output_size=10,
+            max_grad_norm=5.0,
+            dropout_keep_proba=0.5,
+        )
         session.run(tf.global_variables_initializer())
 
         fd = {
+            model.is_training: False,
             model.inputs: [[
                 [5, 4, 1, 0],
                 [3, 3, 6, 7],
