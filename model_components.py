@@ -2,11 +2,9 @@ import tensorflow as tf
 import tensorflow.contrib.layers as layers
 
 try:
-    from tensorflow.contrib.rnn import LSTMCell, LSTMStateTuple, GRUCell
+    from tensorflow.contrib.rnn import LSTMStateTuple
 except ImportError:
-    LSTMCell = tf.nn.rnn_cell.LSTMCell
     LSTMStateTuple = tf.nn.rnn_cell.LSTMStateTuple
-    GRUCell = tf.nn.rnn_cell.GRUCell
 
 
 def bidirectional_rnn(cell_fw, cell_bw, inputs_embedded, input_lengths,

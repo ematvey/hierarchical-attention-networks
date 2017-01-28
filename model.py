@@ -6,206 +6,209 @@ from model_components import task_specific_attention, bidirectional_rnn
 
 
 class TextClassifierModel():
-    """ Implementation of document classification model described in
-        `Hierarchical Attention Networks for Document Classification (Yang et al., 2016)`
-        (https://www.cs.cmu.edu/~diyiy/docs/naacl16.pdf)"""
+  """ Implementation of document classification model described in
+    `Hierarchical Attention Networks for Document Classification (Yang et al., 2016)`
+    (https://www.cs.cmu.edu/~diyiy/docs/naacl16.pdf)"""
 
-    def __init__(self,
-                 vocab_size,
-                 embedding_size,
-                 classes,
-                 word_cell,
-                 sentence_cell,
-                 word_output_size,
-                 sentence_output_size,
-                 max_grad_norm,
-                 dropout_keep_proba,
-                 device='/cpu:0',
-                 scope=None):
-        self.vocab_size = vocab_size
-        self.embedding_size = embedding_size
-        self.classes = classes
-        self.word_cell = word_cell
-        self.word_output_size = word_output_size
-        self.sentence_cell = sentence_cell
-        self.sentence_output_size = sentence_output_size
-        self.max_grad_norm = max_grad_norm
-        self.dropout_keep_proba = dropout_keep_proba
+  def __init__(self,
+               vocab_size,
+               embedding_size,
+               classes,
+               word_cell,
+               sentence_cell,
+               word_output_size,
+               sentence_output_size,
+               max_grad_norm,
+               dropout_keep_proba,
+               is_training=None,
+               learning_rate=1e-4,
+               device='/cpu:0',
+               scope=None):
+    self.vocab_size = vocab_size
+    self.embedding_size = embedding_size
+    self.classes = classes
+    self.word_cell = word_cell
+    self.word_output_size = word_output_size
+    self.sentence_cell = sentence_cell
+    self.sentence_output_size = sentence_output_size
+    self.max_grad_norm = max_grad_norm
+    self.dropout_keep_proba = dropout_keep_proba
 
-        with tf.variable_scope(scope or 'tcm') as scope:
-            self.global_step = tf.Variable(0, name='global_step', trainable=False)
+    with tf.variable_scope(scope or 'tcm') as scope:
+      self.global_step = tf.Variable(0, name='global_step', trainable=False)
 
-            self._init_inputs(scope)
+      if is_training is not None:
+        self.is_training = is_training
+      else:
+        self.is_training = tf.placeholder(dtype=tf.bool, name='is_training')
 
-            (self.document_size,
-                self.sentence_size,
-                self.word_size) = tf.unstack(tf.shape(self.inputs))
+      # [document x sentence x word]
+      self.inputs = tf.placeholder(shape=(None, None, None), dtype=tf.int32, name='inputs')
 
-            self._init_embedding(scope)
+      # [document x sentence]
+      self.word_lengths = tf.placeholder(shape=(None, None), dtype=tf.int32, name='word_lengths')
 
-            # embeddings cannot be placed on GPU
-            with tf.device(device):
-                self._init_body(scope)
+      # [document]
+      self.sentence_lengths = tf.placeholder(shape=(None,), dtype=tf.int32, name='sentence_lengths')
 
-        with tf.variable_scope('train'):
-            self.loss = tf.reduce_mean(
-                tf.nn.sparse_softmax_cross_entropy_with_logits(
-                labels=self.labels, logits=self.logits))
-            tf.summary.scalar('loss', self.loss)
+      # [document]
+      self.labels = tf.placeholder(shape=(None,), dtype=tf.int32, name='labels')
 
-            self.accuracy = tf.reduce_mean(tf.cast(tf.nn.in_top_k(self.logits, self.labels, 1), tf.float32))
-            tf.summary.scalar('accuracy', self.accuracy)
+      (self.document_size,
+        self.sentence_size,
+        self.word_size) = tf.unstack(tf.shape(self.inputs))
 
-            tvars = tf.trainable_variables()
+      self._init_embedding(scope)
 
-            grads, global_norm = tf.clip_by_global_norm(
-                tf.gradients(self.loss, tvars),
-                self.max_grad_norm)
-            tf.summary.scalar('global_grad_norm', global_norm)
+      # embeddings cannot be placed on GPU
+      with tf.device(device):
+        self._init_body(scope)
 
-            opt = tf.train.AdamOptimizer(1e-3)
+    with tf.variable_scope('train'):
+      self.loss = tf.reduce_mean(
+        tf.nn.sparse_softmax_cross_entropy_with_logits(
+        labels=self.labels, logits=self.logits))
+      tf.summary.scalar('loss', self.loss)
 
-            self.train_op = opt.apply_gradients(
-                zip(grads, tvars), name='train_op',
-                global_step=self.global_step)
+      self.accuracy = tf.reduce_mean(tf.cast(tf.nn.in_top_k(self.logits, self.labels, 1), tf.float32))
+      tf.summary.scalar('accuracy', self.accuracy)
 
-            self.summary_op = tf.summary.merge_all()
+      tvars = tf.trainable_variables()
 
-    def _init_inputs(self, scope):
-        with tf.variable_scope(scope) as scope:
+      grads, global_norm = tf.clip_by_global_norm(
+        tf.gradients(self.loss, tvars),
+        self.max_grad_norm)
+      tf.summary.scalar('global_grad_norm', global_norm)
 
-            self.is_training = tf.placeholder(dtype=tf.bool, name='is_training')
+      opt = tf.train.AdamOptimizer(learning_rate)
 
-            # [document x sentence x word]
-            self.inputs = tf.placeholder(shape=(None, None, None), dtype=tf.int32, name='inputs')
+      self.train_op = opt.apply_gradients(
+        zip(grads, tvars), name='train_op',
+        global_step=self.global_step)
 
-            # [document x sentence]
-            self.word_lengths = tf.placeholder(shape=(None, None), dtype=tf.int32, name='word_lengths')
+      self.summary_op = tf.summary.merge_all()
 
-            # [document]
-            self.sentence_lengths = tf.placeholder(shape=(None,), dtype=tf.int32, name='sentence_lengths')
+  def _init_embedding(self, scope):
+    with tf.variable_scope(scope):
+      with tf.variable_scope("embedding") as scope:
+        self.embedding_matrix = tf.get_variable(
+          name="embedding_matrix",
+          shape=[self.vocab_size, self.embedding_size],
+          initializer=layers.xavier_initializer(),
+          dtype=tf.float32)
+        self.inputs_embedded = layers.embedding_lookup_unique(
+          self.embedding_matrix, self.inputs)
 
-            # [document]
-            self.labels = tf.placeholder(shape=(None,), dtype=tf.int32, name='labels')
+  def _init_body(self, scope):
+    with tf.variable_scope(scope):
 
-    def _init_embedding(self, scope):
-        with tf.variable_scope(scope):
-            with tf.variable_scope("embedding") as scope:
-                self.embedding_matrix = tf.get_variable(
-                    name="embedding_matrix",
-                    shape=[self.vocab_size, self.embedding_size],
-                    initializer=layers.xavier_initializer(),
-                    dtype=tf.float32)
-                self.inputs_embedded = layers.embedding_lookup_unique(
-                    self.embedding_matrix, self.inputs)
+      word_level_inputs = tf.reshape(self.inputs_embedded, [
+        self.document_size * self.sentence_size,
+        self.word_size,
+        self.embedding_size
+      ])
+      word_level_lengths = tf.reshape(
+        self.word_lengths, [self.document_size * self.sentence_size])
 
-    def _init_body(self, scope):
-        with tf.variable_scope(scope):
+      with tf.variable_scope('word') as scope:
+        word_encoder_output, _ = bidirectional_rnn(
+          self.word_cell, self.word_cell,
+          word_level_inputs, word_level_lengths,
+          scope=scope)
 
-            word_level_inputs = tf.reshape(self.inputs_embedded, [
-                self.document_size * self.sentence_size,
-                self.word_size,
-                self.embedding_size
-            ])
-            word_level_lengths = tf.reshape(
-                self.word_lengths, [self.document_size * self.sentence_size])
+        with tf.variable_scope('attention') as scope:
+          word_level_output = task_specific_attention(
+            word_encoder_output,
+            self.word_output_size,
+            scope=scope)
 
-            with tf.variable_scope('word') as scope:
-                word_encoder_output, _ = bidirectional_rnn(
-                    self.word_cell, self.word_cell,
-                    word_level_inputs, word_level_lengths,
-                    scope=scope)
+        with tf.variable_scope('dropout'):
+          word_level_output = layers.dropout(
+            word_level_output, keep_prob=self.dropout_keep_proba,
+            is_training=self.is_training,
+          )
 
-                with tf.variable_scope('attention') as scope:
-                    word_level_output = task_specific_attention(
-                        word_encoder_output,
-                        self.word_output_size,
-                        scope=scope)
+      # sentence_level
 
-                with tf.variable_scope('dropout'):
-                    word_level_output = layers.dropout(
-                        word_level_output, keep_prob=self.dropout_keep_proba,
-                        is_training=self.is_training,
-                    )
+      sentence_inputs = tf.reshape(
+        word_level_output, [self.document_size, self.sentence_size, self.word_output_size])
 
-            # sentence_level
+      with tf.variable_scope('sentence') as scope:
+        sentence_encoder_output, _ = bidirectional_rnn(
+          self.sentence_cell, self.sentence_cell, sentence_inputs, self.sentence_lengths, scope=scope)
 
-            sentence_inputs = tf.reshape(
-                word_level_output, [self.document_size, self.sentence_size, self.word_output_size])
+        with tf.variable_scope('attention') as scope:
+          sentence_level_output = task_specific_attention(
+            sentence_encoder_output, self.sentence_output_size, scope=scope)
 
-            with tf.variable_scope('sentence') as scope:
-                sentence_encoder_output, _ = bidirectional_rnn(
-                    self.sentence_cell, self.sentence_cell, sentence_inputs, self.sentence_lengths, scope=scope)
+        with tf.variable_scope('dropout'):
+          sentence_level_output = layers.dropout(
+            sentence_level_output, keep_prob=self.dropout_keep_proba,
+            is_training=self.is_training,
+          )
 
-                with tf.variable_scope('attention') as scope:
-                    sentence_level_output = task_specific_attention(
-                        sentence_encoder_output, self.sentence_output_size, scope=scope)
+      with tf.variable_scope('classifier'):
+        self.logits = layers.fully_connected(
+          sentence_level_output, self.classes, activation_fn=None)
 
-                with tf.variable_scope('dropout'):
-                    sentence_level_output = layers.dropout(
-                        sentence_level_output, keep_prob=self.dropout_keep_proba,
-                        is_training=self.is_training,
-                    )
+        self.prediction = tf.argmax(self.logits, axis=-1)
 
-            with tf.variable_scope('classifier'):
-                self.logits = layers.fully_connected(
-                    sentence_level_output, self.classes, activation_fn=None)
-
-    def get_feed_data(self, x, y=None):
-        x_m, doc_sizes, sent_sizes = data_util.batch(x)
-        fd = {
-            self.inputs: x_m,
-            self.sentence_lengths: doc_sizes,
-            self.word_lengths: sent_sizes,
-        }
-        if y is not None:
-            fd[self.labels] = y
-            fd[self.is_training] = True
-        return fd
+  def get_feed_data(self, x, y=None, is_training=True):
+    x_m, doc_sizes, sent_sizes = data_util.batch(x)
+    fd = {
+      self.inputs: x_m,
+      self.sentence_lengths: doc_sizes,
+      self.word_lengths: sent_sizes,
+    }
+    if y is not None:
+      fd[self.labels] = y
+    if is_training:
+      fd[self.is_training] = True
+    return fd
 
 
 if __name__ == '__main__':
-    try:
-        from tensorflow.contrib.rnn import LSTMCell, LSTMStateTuple, GRUCell
-    except ImportError:
-        LSTMCell = tf.nn.rnn_cell.LSTMCell
-        LSTMStateTuple = tf.nn.rnn_cell.LSTMStateTuple
-        GRUCell = tf.nn.rnn_cell.GRUCell
+  try:
+    from tensorflow.contrib.rnn import LSTMCell, LSTMStateTuple, GRUCell
+  except ImportError:
+    LSTMCell = tf.nn.rnn_cell.LSTMCell
+    LSTMStateTuple = tf.nn.rnn_cell.LSTMStateTuple
+    GRUCell = tf.nn.rnn_cell.GRUCell
 
-    tf.reset_default_graph()
-    with tf.Session() as session:
-        model = TextClassifierModel(
-            vocab_size=10,
-            embedding_size=5,
-            classes=2,
-            word_cell=GRUCell(10),
-            sentence_cell=GRUCell(10),
-            word_output_size=10,
-            sentence_output_size=10,
-            max_grad_norm=5.0,
-            dropout_keep_proba=0.5,
-        )
-        session.run(tf.global_variables_initializer())
+  tf.reset_default_graph()
+  with tf.Session() as session:
+    model = TextClassifierModel(
+      vocab_size=10,
+      embedding_size=5,
+      classes=2,
+      word_cell=GRUCell(10),
+      sentence_cell=GRUCell(10),
+      word_output_size=10,
+      sentence_output_size=10,
+      max_grad_norm=5.0,
+      dropout_keep_proba=0.5,
+    )
+    session.run(tf.global_variables_initializer())
 
-        fd = {
-            model.is_training: False,
-            model.inputs: [[
-                [5, 4, 1, 0],
-                [3, 3, 6, 7],
-                [6, 7, 0, 0]
-            ],
-                [
-                [2, 2, 1, 0],
-                [3, 3, 6, 7],
-                [0, 0, 0, 0]
-            ]],
-            model.word_lengths: [
-                [3, 4, 2],
-                [3, 4, 0],
-            ],
-            model.sentence_lengths: [3, 2],
-            model.labels: [0, 1],
-        }
+    fd = {
+      model.is_training: False,
+      model.inputs: [[
+        [5, 4, 1, 0],
+        [3, 3, 6, 7],
+        [6, 7, 0, 0]
+      ],
+        [
+        [2, 2, 1, 0],
+        [3, 3, 6, 7],
+        [0, 0, 0, 0]
+      ]],
+      model.word_lengths: [
+        [3, 4, 2],
+        [3, 4, 0],
+      ],
+      model.sentence_lengths: [3, 2],
+      model.labels: [0, 1],
+    }
 
-        print(session.run(model.logits, fd))
-        session.run(model.train_op, fd)
+    print(session.run(model.logits, fd))
+    session.run(model.train_op, fd)
