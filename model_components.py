@@ -22,17 +22,17 @@ def bidirectional_rnn(cell_fw, cell_bw, inputs_embedded, input_lengths,
                                             dtype=tf.float32,
                                             swap_memory=True,
                                             scope=scope))
-        outputs = tf.concat_v2((fw_outputs, fw_outputs), 2)
+        outputs = tf.concat((fw_outputs, fw_outputs), 2)
 
         def concatenate_state(fw_state, bw_state):
             if isinstance(fw_state, LSTMStateTuple):
-                state_c = tf.concat_v2(
+                state_c = tf.concat(
                     (fw_state.c, bw_state.c), 1, name='bidirectional_concat_c')
-                state_h = tf.concat_v2(
+                state_h = tf.concat(
                     (fw_state.h, bw_state.h), 1, name='bidirectional_concat_h')
                 state = LSTMStateTuple(c=state_c, h=state_h)
             elif isinstance(fw_state, tf.Tensor):
-                state = tf.concat_v2((fw_state, bw_state), 1,
+                state = tf.concat((fw_state, bw_state), 1,
                                     name='bidirectional_concat')
             elif (isinstance(fw_state, tuple) and
                     isinstance(bw_state, tuple) and

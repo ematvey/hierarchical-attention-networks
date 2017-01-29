@@ -164,7 +164,7 @@ def train():
 
     for i, (x, y) in enumerate(batch_iterator(trainset, args.batch_size, 300)):
       fd = model.get_feed_data(x, y, class_weights=class_weights)
-      print(fd[model.sample_weights])
+
       step, summaries, loss, accuracy, _ = s.run([
         model.global_step,
         model.summary_op,
