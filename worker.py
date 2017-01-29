@@ -4,8 +4,8 @@ import importlib
 import os
 import pickle
 import random
-from collections import defaultdict
-
+from collections import defaultdict, Counter
+import pandas as pd
 import ujson
 import numpy as np
 import spacy
@@ -28,19 +28,23 @@ parser.add_argument('task')
 parser.add_argument('mode', choices=['train', 'eval'])
 parser.add_argument('--checkpoint-frequency', type=int, default=100)
 parser.add_argument('--batch-size', type=int, default=100)
+parser.add_argument("--device", default="/cpu:0")
+parser.add_argument("--max-grad-norm", type=float, default=5.0)
 args = parser.parse_args()
 
 task = importlib.import_module(args.task)
 
-device = '/cpu:0'
 checkpoint_dir = os.path.join(task.train_dir, 'checkpoint')
 tflog_dir = os.path.join(task.train_dir, 'tflog')
-
 checkpoint_name = args.task + '-model'
 checkpoint_dir = os.path.join(task.train_dir, 'checkpoints')
 checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
 
 trainset = task.read_trainset()
+class_weights = pd.Series(Counter([l for _, l in trainset]))
+class_weights = 1/(class_weights/class_weights.mean())
+class_weights = class_weights.to_dict()
+
 devset = task.read_devset()
 vocab = task.read_vocab()
 labels = task.read_labels()
@@ -51,6 +55,8 @@ vocab_rev = {int(v): k for k, v in vocab.items()}
 def decode(ex):
   print('text: ' + '\n'.join([' '.join([vocab_rev.get(wid, '<?>') for wid in sent]) for sent in ex[0]]))
   print('label: ', labels_rev[ex[1]])
+
+print('data loaded')
 
 # import IPython
 # IPython.embed()
@@ -83,9 +89,9 @@ def create_model(session, restore_only=False):
     sentence_cell=cell,
     word_output_size=100,
     sentence_output_size=100,
-    device=device,
+    device=args.device,
     learning_rate=1e-4,
-    max_grad_norm=15.0,
+    max_grad_norm=args.max_grad_norm,
     dropout_keep_proba=0.5,
     is_training=is_training,
   )
@@ -108,16 +114,30 @@ def evaluate():
 
   config = tf.ConfigProto(allow_soft_placement=True)
 
+  confusion_matrix = np.zeros([len(labels), len(labels)])
+
   with tf.Session(config=config) as s:
     model, saver = create_model(s, restore_only=True)
     print('evaluating model on the dev set')
 
-    for x, y in batch_iterator(devset, args.batch_size, 300):
+    subset = devset[:]
+
+    for x, y in tqdm(
+      batch_iterator(subset, args.batch_size, 1),
+      total=int(len(subset)/args.batch_size)+1
+    ):
+      y = np.array(y)
       fd = model.get_feed_data(x)
       prediction = s.run(model.prediction, fd)
 
-      import IPython
-      IPython.embed()
+      for pred, true in zip(prediction, y):
+        confusion_matrix[pred, true] += 1
+
+  ax = [labels_rev[i] for i in range(len(labels))]
+  conf = pd.DataFrame(confusion_matrix, columns=ax, index=ax)
+
+  import IPython
+  IPython.embed()
 
 def train():
   tf.reset_default_graph()
@@ -143,7 +163,8 @@ def train():
     # Saves a configuration file that TensorBoard will read during startup.
 
     for i, (x, y) in enumerate(batch_iterator(trainset, args.batch_size, 300)):
-      fd = model.get_feed_data(x, y)
+      fd = model.get_feed_data(x, y, class_weights=class_weights)
+      print(fd[model.sample_weights])
       step, summaries, loss, accuracy, _ = s.run([
         model.global_step,
         model.summary_op,

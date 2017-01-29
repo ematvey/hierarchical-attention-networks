@@ -1,6 +1,6 @@
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
-
+import numpy as np
 import data_util
 from model_components import task_specific_attention, bidirectional_rnn
 
@@ -42,6 +42,8 @@ class TextClassifierModel():
       else:
         self.is_training = tf.placeholder(dtype=tf.bool, name='is_training')
 
+      self.sample_weights = tf.placeholder(shape=(None,), dtype=tf.float32, name='sample_weights')
+
       # [document x sentence x word]
       self.inputs = tf.placeholder(shape=(None, None, None), dtype=tf.int32, name='inputs')
 
@@ -65,9 +67,9 @@ class TextClassifierModel():
         self._init_body(scope)
 
     with tf.variable_scope('train'):
-      self.loss = tf.reduce_mean(
-        tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=self.labels, logits=self.logits))
+      self.cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.labels, logits=self.logits)
+
+      self.loss = tf.reduce_mean(tf.multiply(self.cross_entropy, self.sample_weights))
       tf.summary.scalar('loss', self.loss)
 
       self.accuracy = tf.reduce_mean(tf.cast(tf.nn.in_top_k(self.logits, self.labels, 1), tf.float32))
@@ -153,7 +155,7 @@ class TextClassifierModel():
 
         self.prediction = tf.argmax(self.logits, axis=-1)
 
-  def get_feed_data(self, x, y=None, is_training=True):
+  def get_feed_data(self, x, y=None, class_weights=None, is_training=True):
     x_m, doc_sizes, sent_sizes = data_util.batch(x)
     fd = {
       self.inputs: x_m,
@@ -162,6 +164,10 @@ class TextClassifierModel():
     }
     if y is not None:
       fd[self.labels] = y
+      if class_weights is not None:
+        fd[self.sample_weights] = [class_weights[yy] for yy in y]
+      else:
+        fd[self.sample_weights] = np.ones(shape=[len(x_m)], dtype=np.float32)
     if is_training:
       fd[self.is_training] = True
     return fd
