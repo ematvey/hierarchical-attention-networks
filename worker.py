@@ -4,15 +4,17 @@ import importlib
 import os
 import pickle
 import random
-from collections import defaultdict, Counter
-import pandas as pd
-import ujson
+import time
+from collections import Counter, defaultdict
+
 import numpy as np
+import pandas as pd
 import spacy
 import tensorflow as tf
 from tensorflow.contrib.tensorboard.plugins import projector
 from tqdm import tqdm
 
+import ujson
 from bn_lstm import BNLSTMCell
 from data_util import batch
 from model import TextClassifierModel
@@ -165,6 +167,7 @@ def train():
     for i, (x, y) in enumerate(batch_iterator(trainset, args.batch_size, 300)):
       fd = model.get_feed_data(x, y, class_weights=class_weights)
 
+      t0 = time.clock()
       step, summaries, loss, accuracy, _ = s.run([
         model.global_step,
         model.summary_op,
@@ -172,12 +175,13 @@ def train():
         model.accuracy,
         model.train_op,
       ], fd)
+      td = time.clock() - t0
 
       summary_writer.add_summary(summaries, global_step=step)
       # projector.visualize_embeddings(summary_writer, pconf)
 
       if i % 1 == 0:
-        print('step %s, loss=%s, accuracy=%s' % (step, loss, accuracy))
+        print('step %s, loss=%s, accuracy=%s, t=%s' % (step, loss, accuracy, td))
       if i != 0 and i % args.checkpoint_frequency == 0:
         print('checkpoint & graph meta')
         saver.save(s, checkpoint_path, global_step=step)
