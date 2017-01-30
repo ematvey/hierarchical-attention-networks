@@ -32,6 +32,7 @@ parser.add_argument('--checkpoint-frequency', type=int, default=100)
 parser.add_argument('--batch-size', type=int, default=100)
 parser.add_argument("--device", default="/cpu:0")
 parser.add_argument("--max-grad-norm", type=float, default=5.0)
+parser.add_argument("--lr", type=float, default=0.001)
 args = parser.parse_args()
 
 task = importlib.import_module(args.task)
@@ -59,9 +60,6 @@ def decode(ex):
   print('label: ', labels_rev[ex[1]])
 
 print('data loaded')
-
-# import IPython
-# IPython.embed()
 
 def batch_iterator(dataset, batch_size, max_epochs):
   for i in range(max_epochs):
@@ -92,7 +90,7 @@ def create_model(session, restore_only=False):
     word_output_size=100,
     sentence_output_size=100,
     device=args.device,
-    learning_rate=1e-4,
+    learning_rate=args.lr,
     max_grad_norm=args.max_grad_norm,
     dropout_keep_proba=0.5,
     is_training=is_training,
