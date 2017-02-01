@@ -29,7 +29,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('task')
 parser.add_argument('mode', choices=['train', 'eval'])
 parser.add_argument('--checkpoint-frequency', type=int, default=100)
-parser.add_argument('--batch-size', type=int, default=100)
+parser.add_argument('--batch-size', type=int, default=10)
 parser.add_argument("--device", default="/cpu:0")
 parser.add_argument("--max-grad-norm", type=float, default=5.0)
 parser.add_argument("--lr", type=float, default=0.001)
@@ -43,7 +43,7 @@ checkpoint_name = args.task + '-model'
 checkpoint_dir = os.path.join(task.train_dir, 'checkpoints')
 checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
 
-trainset = task.read_trainset()
+trainset = task.read_trainset(epochs=1)
 class_weights = pd.Series(Counter([l for _, l in trainset]))
 class_weights = 1/(class_weights/class_weights.mean())
 class_weights = class_weights.to_dict()
@@ -82,7 +82,7 @@ def create_model(session, restore_only=False):
   cell = MultiRNNCell([cell]*5)
 
   model = TextClassifierModel(
-    vocab_size=10000,
+    vocab_size=task.vocab_size,
     embedding_size=200,
     classes=len(labels),
     word_cell=cell,
@@ -162,7 +162,7 @@ def train():
 
     # Saves a configuration file that TensorBoard will read during startup.
 
-    for i, (x, y) in enumerate(batch_iterator(trainset, args.batch_size, 300)):
+    for i, (x, y) in enumerate(batch_iterator(task.read_trainset(), args.batch_size, 300)):
       fd = model.get_feed_data(x, y, class_weights=class_weights)
 
       t0 = time.clock()

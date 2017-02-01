@@ -5,6 +5,8 @@ parser.add_argument("yelp-review-file", dest='review_path')
 parser.add_argument("--output-dir", default=os.path.expandvars('.'), dest='output_dir')
 args = parser.parse_args()
 
+from yelp import *
+
 train_fn = os.path.join(args.output_dir, 'train.dataset')
 dev_fn = os.path.join(args.output_dir, 'dev.dataset')
 test_fn = os.path.join(args.output_dir, 'test.dataset')
