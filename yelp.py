@@ -2,13 +2,14 @@ import os
 import pickle
 from collections import namedtuple
 
-train_dir = os.path.join(os.path.curdir, 'yelp')
+train_dir = os.path.join(os.path.curdir, 'yelp2')
 data_dir = os.path.join(train_dir, 'data')
 
 # trainset_str_fn = os.path.join(data_dir, 'train.str.dataset')
 # devset_str_fn = os.path.join(data_dir, 'dev.str.dataset')
 trainset_fn = os.path.join(data_dir, 'train.dataset')
 devset_fn = os.path.join(data_dir, 'dev.dataset')
+testset_fn = os.path.join(data_dir, 'test.dataset')
 vocab_fn = os.path.join(data_dir, 'vocab.pickle')
 
 reserved_tokens = 5

@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
 import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('task')
+parser.add_argument('mode', choices=['train', 'eval'])
+parser.add_argument('--checkpoint-frequency', type=int, default=100)
+parser.add_argument('--batch-size', type=int, default=10)
+parser.add_argument("--device", default="/cpu:0")
+parser.add_argument("--max-grad-norm", type=float, default=5.0)
+parser.add_argument("--lr", type=float, default=0.001)
+args = parser.parse_args()
+
+
 import importlib
 import os
 import pickle
@@ -15,25 +26,7 @@ from tensorflow.contrib.tensorboard.plugins import projector
 from tqdm import tqdm
 
 import ujson
-from bn_lstm import BNLSTMCell
 from data_util import batch
-from model import TextClassifierModel
-
-try:
-  from tensorflow.contrib.rnn import GRUCell, MultiRNNCell
-except ImportError:
-  MultiRNNCell = tf.nn.rnn_cell.MultiRNNCell
-  GRUCell = tf.nn.rnn_cell.GRUCell
-
-parser = argparse.ArgumentParser()
-parser.add_argument('task')
-parser.add_argument('mode', choices=['train', 'eval'])
-parser.add_argument('--checkpoint-frequency', type=int, default=100)
-parser.add_argument('--batch-size', type=int, default=10)
-parser.add_argument("--device", default="/cpu:0")
-parser.add_argument("--max-grad-norm", type=float, default=5.0)
-parser.add_argument("--lr", type=float, default=0.001)
-args = parser.parse_args()
 
 task = importlib.import_module(args.task)
 
@@ -43,6 +36,7 @@ checkpoint_name = args.task + '-model'
 checkpoint_dir = os.path.join(task.train_dir, 'checkpoints')
 checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
 
+# @TODO: split out
 trainset = task.read_trainset(epochs=1)
 class_weights = pd.Series(Counter([l for _, l in trainset]))
 class_weights = 1/(class_weights/class_weights.mean())
@@ -52,39 +46,34 @@ devset = task.read_devset()
 vocab = task.read_vocab()
 labels = task.read_labels()
 
+classes = max(labels.values())+1
+vocab_size = task.vocab_size
+
 labels_rev = {int(v): k for k, v in labels.items()}
 vocab_rev = {int(v): k for k, v in vocab.items()}
 
-def decode(ex):
-  print('text: ' + '\n'.join([' '.join([vocab_rev.get(wid, '<?>') for wid in sent]) for sent in ex[0]]))
-  print('label: ', labels_rev[ex[1]])
 
-print('data loaded')
+def HAN_model_1(session, restore_only=False):
+  """Hierarhical Attention Network"""
+  import tensorflow as tf
+  try:
+    from tensorflow.contrib.rnn import GRUCell, MultiRNNCell
+  except ImportError:
+    MultiRNNCell = tf.nn.rnn_cell.MultiRNNCell
+    GRUCell = tf.nn.rnn_cell.GRUCell
+  from bn_lstm import BNLSTMCell
+  from HAN_model import HANClassifierModel
 
-def batch_iterator(dataset, batch_size, max_epochs):
-  for i in range(max_epochs):
-    xb = []
-    yb = []
-    for ex in dataset:
-      x, y = ex
-      xb.append(x)
-      yb.append(y)
-      if len(xb) == batch_size:
-        yield xb, yb
-        xb, yb = [], []
-    print('epoch %s over' % i)
-
-def create_model(session, restore_only=False):
   is_training = tf.placeholder(dtype=tf.bool, name='is_training')
 
   cell = BNLSTMCell(80, is_training) # h-h batchnorm LSTMCell
   # cell = GRUCell(80)
-  cell = MultiRNNCell([cell]*5)
+  # cell = MultiRNNCell([cell]*5)
 
-  model = TextClassifierModel(
-    vocab_size=task.vocab_size,
+  model = HANClassifierModel(
+    vocab_size=vocab_size,
     embedding_size=200,
-    classes=len(labels),
+    classes=classes,
     word_cell=cell,
     sentence_cell=cell,
     word_output_size=100,
@@ -106,8 +95,29 @@ def create_model(session, restore_only=False):
   else:
     print("Created model with fresh parameters")
     session.run(tf.global_variables_initializer())
-  tf.get_default_graph().finalize()
+  # tf.get_default_graph().finalize()
   return model, saver
+
+model_fn = HAN_model_1
+
+def decode(ex):
+  print('text: ' + '\n'.join([' '.join([vocab_rev.get(wid, '<?>') for wid in sent]) for sent in ex[0]]))
+  print('label: ', labels_rev[ex[1]])
+
+print('data loaded')
+
+def batch_iterator(dataset, batch_size, max_epochs):
+  for i in range(max_epochs):
+    xb = []
+    yb = []
+    for ex in dataset:
+      x, y = ex
+      xb.append(x)
+      yb.append(y)
+      if len(xb) == batch_size:
+        yield xb, yb
+        xb, yb = [], []
+    print('epoch %s over' % i)
 
 def evaluate():
   tf.reset_default_graph()
@@ -117,7 +127,7 @@ def evaluate():
   confusion_matrix = np.zeros([len(labels), len(labels)])
 
   with tf.Session(config=config) as s:
-    model, saver = create_model(s, restore_only=True)
+    model, saver = model_fn(s, restore_only=True)
     print('evaluating model on the dev set')
 
     subset = devset[:]
@@ -139,13 +149,14 @@ def evaluate():
   import IPython
   IPython.embed()
 
+
 def train():
   tf.reset_default_graph()
 
   config = tf.ConfigProto(allow_soft_placement=True)
 
   with tf.Session(config=config) as s:
-    model, saver = create_model(s)
+    model, saver = model_fn(s)
     summary_writer = tf.summary.FileWriter(tflog_dir, graph=tf.get_default_graph())
 
     # Format: tensorflow/contrib/tensorboard/plugins/projector/projector_config.proto
@@ -165,6 +176,9 @@ def train():
     for i, (x, y) in enumerate(batch_iterator(task.read_trainset(), args.batch_size, 300)):
       fd = model.get_feed_data(x, y, class_weights=class_weights)
 
+      # import IPython
+      # IPython.embed()
+
       t0 = time.clock()
       step, summaries, loss, accuracy, _ = s.run([
         model.global_step,
@@ -179,7 +193,7 @@ def train():
       # projector.visualize_embeddings(summary_writer, pconf)
 
       if i % 1 == 0:
-        print('step %s, loss=%s, accuracy=%s, t=%s' % (step, loss, accuracy, td))
+        print('step %s, loss=%s, accuracy=%s, t=%s, inputs=%s' % (step, loss, accuracy, round(td, 2), fd[model.inputs].shape))
       if i != 0 and i % args.checkpoint_frequency == 0:
         print('checkpoint & graph meta')
         saver.save(s, checkpoint_path, global_step=step)

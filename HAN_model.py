@@ -5,7 +5,7 @@ import data_util
 from model_components import task_specific_attention, bidirectional_rnn
 
 
-class TextClassifierModel():
+class HANClassifierModel():
   """ Implementation of document classification model described in
     `Hierarchical Attention Networks for Document Classification (Yang et al., 2016)`
     (https://www.cs.cmu.edu/~diyiy/docs/naacl16.pdf)"""
@@ -183,7 +183,7 @@ if __name__ == '__main__':
 
   tf.reset_default_graph()
   with tf.Session() as session:
-    model = TextClassifierModel(
+    model = HANClassifierModel(
       vocab_size=10,
       embedding_size=5,
       classes=2,

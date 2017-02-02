@@ -1,15 +1,10 @@
 import os
 import argparse
 parser = argparse.ArgumentParser()
-parser.add_argument("yelp-review-file", dest='review_path')
-parser.add_argument("--output-dir", default=os.path.expandvars('.'), dest='output_dir')
+parser.add_argument("review_path")
 args = parser.parse_args()
 
 from yelp import *
-
-train_fn = os.path.join(args.output_dir, 'train.dataset')
-dev_fn = os.path.join(args.output_dir, 'dev.dataset')
-test_fn = os.path.join(args.output_dir, 'test.dataset')
 
 word_freq_fn = 'word_freq.pickle'
 vocab_fn = 'vocab.pickle'
@@ -27,7 +22,7 @@ en = spacy.load('en')
 en.pipeline = [en.tagger, en.parser]
 
 def read_reviews():
-  with open(review_path, 'rb') as f:
+  with open(args.review_path, 'rb') as f:
     for line in f:
       yield ujson.loads(line)
 
@@ -75,12 +70,12 @@ def build_vocabulary(lower=3, n=50000):
 
 UNKNOWN = 2
 
-def make_data(split_points=(0.8, 0.9)):
+def make_data(split_points=(0.8, 0.94)):
   train_ratio, dev_ratio = split_points
   vocab = build_vocabulary()
-  train_f = open(train_fn, 'wb')
-  dev_f = open(dev_fn, 'wb')
-  test_f = open(test_fn, 'wb')
+  train_f = open(trainset_fn, 'wb')
+  dev_f = open(devset_fn, 'wb')
+  test_f = open(testset_fn, 'wb')
 
   try:
     for review in tqdm(read_reviews()):
@@ -103,3 +98,6 @@ def make_data(split_points=(0.8, 0.9)):
   train_f.close()
   dev_f.close()
   test_f.close()
+
+if __name__ == '__main__':
+  make_data()
