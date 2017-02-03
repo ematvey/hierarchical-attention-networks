@@ -3,8 +3,9 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('task')
 parser.add_argument('mode', choices=['train', 'eval'])
-parser.add_argument('--checkpoint-frequency', type=int, default=100)
-parser.add_argument('--batch-size', type=int, default=10)
+parser.add_argument('--checkpoint-frequency', type=int, default=500)
+parser.add_argument('--eval-frequency', type=int, default=2000)
+parser.add_argument('--batch-size', type=int, default=150)
 parser.add_argument("--device", default="/cpu:0")
 parser.add_argument("--max-grad-norm", type=float, default=5.0)
 parser.add_argument("--lr", type=float, default=0.001)
@@ -57,7 +58,7 @@ def HAN_model_1(session, restore_only=False):
   """Hierarhical Attention Network"""
   import tensorflow as tf
   try:
-    from tensorflow.contrib.rnn import GRUCell, MultiRNNCell
+    from tensorflow.contrib.rnn import GRUCell, MultiRNNCell, DropoutWrapper
   except ImportError:
     MultiRNNCell = tf.nn.rnn_cell.MultiRNNCell
     GRUCell = tf.nn.rnn_cell.GRUCell
@@ -66,8 +67,8 @@ def HAN_model_1(session, restore_only=False):
 
   is_training = tf.placeholder(dtype=tf.bool, name='is_training')
 
-  cell = BNLSTMCell(80, is_training) # h-h batchnorm LSTMCell
-  # cell = GRUCell(80)
+  # cell = BNLSTMCell(80, is_training) # h-h batchnorm LSTMCell
+  cell = GRUCell(30)
   # cell = MultiRNNCell([cell]*5)
 
   model = HANClassifierModel(
@@ -117,35 +118,32 @@ def batch_iterator(dataset, batch_size, max_epochs):
       if len(xb) == batch_size:
         yield xb, yb
         xb, yb = [], []
-    print('epoch %s over' % i)
+    # print('epoch %s over' % i)
 
-def evaluate():
+
+def ev(session, model, dataset):
+  predictions = []
+  labels = []
+  examples = []
+  for x, y in tqdm(
+      batch_iterator(dataset, args.batch_size, 1),
+      total=int(len(dataset)/args.batch_size)+1
+    ):
+    examples.extend(x)
+    labels.extend(y)
+    predictions.extend(session.run(model.prediction, model.get_feed_data(x, is_training=False)))
+
+  df = pd.DataFrame({'predictions': predictions, 'labels': labels, 'examples': examples})
+  return df
+
+
+def evaluate(dataset):
   tf.reset_default_graph()
-
   config = tf.ConfigProto(allow_soft_placement=True)
-
-  confusion_matrix = np.zeros([len(labels), len(labels)])
-
   with tf.Session(config=config) as s:
     model, saver = model_fn(s, restore_only=True)
-    print('evaluating model on the dev set')
-
-    subset = devset[:]
-
-    for x, y in tqdm(
-      batch_iterator(subset, args.batch_size, 1),
-      total=int(len(subset)/args.batch_size)+1
-    ):
-      y = np.array(y)
-      fd = model.get_feed_data(x)
-      prediction = s.run(model.prediction, fd)
-
-      for pred, true in zip(prediction, y):
-        confusion_matrix[pred, true] += 1
-
-  ax = [labels_rev[i] for i in range(len(labels))]
-  conf = pd.DataFrame(confusion_matrix, columns=ax, index=ax)
-
+    df = ev(s, model, dataset)
+  print((df['predictions'] == df['labels']).mean())
   import IPython
   IPython.embed()
 
@@ -192,16 +190,18 @@ def train():
       summary_writer.add_summary(summaries, global_step=step)
       # projector.visualize_embeddings(summary_writer, pconf)
 
-      if i % 1 == 0:
+      if step % 1 == 0:
         print('step %s, loss=%s, accuracy=%s, t=%s, inputs=%s' % (step, loss, accuracy, round(td, 2), fd[model.inputs].shape))
-      if i != 0 and i % args.checkpoint_frequency == 0:
+      if step != 0 and step % args.checkpoint_frequency == 0:
         print('checkpoint & graph meta')
         saver.save(s, checkpoint_path, global_step=step)
         print('checkpoint done')
-        # run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        # run_metadata = tf.RunMetadata()
-        # s.run([m.loss], feed_dict=fd, options=run_options, run_metadata=run_metadata)
-        # summary_writer.add_run_metadata(run_metadata, 'step%d' % step)
+      if step != 0 and step % args.eval_frequency == 0:
+        print('evaluation at step %s' % i)
+        train_df = ev(s, model, trainset)
+        print('train accuracy: %.2f' % (train_df['predictions'] == train_df['labels']).mean())
+        dev_df = ev(s, model, devset)
+        print('dev accuracy: %.2f' % (dev_df['predictions'] == dev_df['labels']).mean())
 
 def main():
   if args.mode == 'train':

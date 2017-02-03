@@ -168,8 +168,7 @@ class HANClassifierModel():
         fd[self.sample_weights] = [class_weights[yy] for yy in y]
       else:
         fd[self.sample_weights] = np.ones(shape=[len(x_m)], dtype=np.float32)
-    if is_training:
-      fd[self.is_training] = True
+    fd[self.is_training] = is_training
     return fd
 
 
