@@ -1,15 +1,10 @@
-import os
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("review_path")
 args = parser.parse_args()
 
-from yelp import *
-
-word_freq_fn = 'word_freq.pickle'
-vocab_fn = 'vocab.pickle'
-
-import ujson
+import os
+import ujson as json
 import spacy
 import pickle
 import random
@@ -17,6 +12,7 @@ from tqdm import tqdm
 from collections import defaultdict
 import numpy as np
 import tensorflow as tf
+from yelp import *
 
 en = spacy.load('en')
 en.pipeline = [en.tagger, en.parser]
@@ -24,34 +20,34 @@ en.pipeline = [en.tagger, en.parser]
 def read_reviews():
   with open(args.review_path, 'rb') as f:
     for line in f:
-      yield ujson.loads(line)
+      yield json.loads(line)
 
 def build_word_frequency_distribution():
-  path = os.path.join(train_dir, word_freq_fn)
+  path = os.path.join(data_dir, 'word_freq.pickle')
+
   try:
-    with open(path, 'rb') as vocab_file:
-      vocab = pickle.load(vocab_file)
+    with open(path, 'rb') as freq_dist_f:
+      freq_dist_f = pickle.load(freq_dist_f)
       print('frequency distribution loaded')
-      return vocab
+      return freq_dist_f
   except IOError:
-    print('building frequency distribution')
-  def dump_vocab_counts(vocab):
-    with open(path, 'wb') as vocab_file:
-      pickle.dump(vocab, vocab_file)
-  vocab = defaultdict(int)
+    pass
+
+  print('building frequency distribution')
+  freq = defaultdict(int)
   for i, review in enumerate(read_reviews()):
     doc = en.tokenizer(review['text'])
     for token in doc:
-      vocab[token.orth_] += 1
+      freq[token.orth_] += 1
     if i % 10000 == 0:
-      dump_vocab_counts(vocab)
+      with open(path, 'wb') as freq_dist_f:
+        pickle.dump(freq, freq_dist_f)
       print('dump at {}'.format(i))
-  return vocab
+  return freq
 
 def build_vocabulary(lower=3, n=50000):
-  path = os.path.join(train_dir, vocab_fn)
   try:
-    with open(path, 'rb') as vocab_file:
+    with open(vocab_fn, 'rb') as vocab_file:
       vocab = pickle.load(vocab_file)
       print('vocabulary loaded')
       return vocab
@@ -64,7 +60,7 @@ def build_vocabulary(lower=3, n=50000):
   for w, freq in top_words:
     vocab[w] = i
     i += 1
-  with open(path, 'wb') as vocab_file:
+  with open(vocab_fn, 'wb') as vocab_file:
     pickle.dump(vocab, vocab_file)
   return vocab
 

@@ -3,14 +3,13 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('task')
 parser.add_argument('mode', choices=['train', 'eval'])
-parser.add_argument('--checkpoint-frequency', type=int, default=500)
-parser.add_argument('--eval-frequency', type=int, default=2000)
-parser.add_argument('--batch-size', type=int, default=150)
+parser.add_argument('--checkpoint-frequency', type=int, default=100)
+parser.add_argument('--eval-frequency', type=int, default=500)
+parser.add_argument('--batch-size', type=int, default=30)
 parser.add_argument("--device", default="/cpu:0")
 parser.add_argument("--max-grad-norm", type=float, default=5.0)
 parser.add_argument("--lr", type=float, default=0.001)
 args = parser.parse_args()
-
 
 import importlib
 import os
@@ -37,7 +36,7 @@ checkpoint_name = args.task + '-model'
 checkpoint_dir = os.path.join(task.train_dir, 'checkpoints')
 checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
 
-# @TODO: split out
+# @TODO: move calculation into `task file`
 trainset = task.read_trainset(epochs=1)
 class_weights = pd.Series(Counter([l for _, l in trainset]))
 class_weights = 1/(class_weights/class_weights.mean())
@@ -67,23 +66,23 @@ def HAN_model_1(session, restore_only=False):
 
   is_training = tf.placeholder(dtype=tf.bool, name='is_training')
 
-  # cell = BNLSTMCell(80, is_training) # h-h batchnorm LSTMCell
-  cell = GRUCell(30)
-  # cell = MultiRNNCell([cell]*5)
+  cell = BNLSTMCell(80, is_training) # h-h batchnorm LSTMCell
+  # cell = GRUCell(30)
+  cell = MultiRNNCell([cell]*5)
 
   model = HANClassifierModel(
-    vocab_size=vocab_size,
-    embedding_size=200,
-    classes=classes,
-    word_cell=cell,
-    sentence_cell=cell,
-    word_output_size=100,
-    sentence_output_size=100,
-    device=args.device,
-    learning_rate=args.lr,
-    max_grad_norm=args.max_grad_norm,
-    dropout_keep_proba=0.5,
-    is_training=is_training,
+      vocab_size=vocab_size,
+      embedding_size=200,
+      classes=classes,
+      word_cell=cell,
+      sentence_cell=cell,
+      word_output_size=100,
+      sentence_output_size=100,
+      device=args.device,
+      learning_rate=args.lr,
+      max_grad_norm=args.max_grad_norm,
+      dropout_keep_proba=0.5,
+      is_training=is_training,
   )
 
   saver = tf.train.Saver(tf.global_variables())
@@ -118,17 +117,13 @@ def batch_iterator(dataset, batch_size, max_epochs):
       if len(xb) == batch_size:
         yield xb, yb
         xb, yb = [], []
-    # print('epoch %s over' % i)
 
 
 def ev(session, model, dataset):
   predictions = []
   labels = []
   examples = []
-  for x, y in tqdm(
-      batch_iterator(dataset, args.batch_size, 1),
-      total=int(len(dataset)/args.batch_size)+1
-    ):
+  for x, y in tqdm(batch_iterator(dataset, args.batch_size, 1)):
     examples.extend(x)
     labels.extend(y)
     predictions.extend(session.run(model.prediction, model.get_feed_data(x, is_training=False)))
@@ -141,7 +136,7 @@ def evaluate(dataset):
   tf.reset_default_graph()
   config = tf.ConfigProto(allow_soft_placement=True)
   with tf.Session(config=config) as s:
-    model, saver = model_fn(s, restore_only=True)
+    model, _ = model_fn(s, restore_only=True)
     df = ev(s, model, dataset)
   print((df['predictions'] == df['labels']).mean())
   import IPython
@@ -179,11 +174,11 @@ def train():
 
       t0 = time.clock()
       step, summaries, loss, accuracy, _ = s.run([
-        model.global_step,
-        model.summary_op,
-        model.loss,
-        model.accuracy,
-        model.train_op,
+          model.global_step,
+          model.summary_op,
+          model.loss,
+          model.accuracy,
+          model.train_op,
       ], fd)
       td = time.clock() - t0
 
@@ -207,7 +202,7 @@ def main():
   if args.mode == 'train':
     train()
   elif args.mode == 'eval':
-    evaluate()
+    evaluate(devset)
 
 if __name__ == '__main__':
   main()

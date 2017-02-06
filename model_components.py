@@ -31,17 +31,23 @@ def bidirectional_rnn(cell_fw, cell_bw, inputs_embedded, input_lengths,
                 state_h = tf.concat(
                     (fw_state.h, bw_state.h), 1, name='bidirectional_concat_h')
                 state = LSTMStateTuple(c=state_c, h=state_h)
+                return state
             elif isinstance(fw_state, tf.Tensor):
                 state = tf.concat((fw_state, bw_state), 1,
-                                    name='bidirectional_concat')
+                                  name='bidirectional_concat')
+                return state
             elif (isinstance(fw_state, tuple) and
                     isinstance(bw_state, tuple) and
                     len(fw_state) == len(bw_state)):
                 # multilayer
-                state = tuple(concatenate_state(fw, bw) for fw, bw in zip(fw_state, bw_state))
+                state = tuple(concatenate_state(fw, bw)
+                              for fw, bw in zip(fw_state, bw_state))
+                return state
 
             else:
-                raise ValueError('unknown state type: {}'.format((fw_state,bw_state)))
+                raise ValueError(
+                    'unknown state type: {}'.format((fw_state, bw_state)))
+
 
         state = concatenate_state(fw_state, bw_state)
         return outputs, state
@@ -84,4 +90,3 @@ def task_specific_attention(inputs, output_size,
         outputs = tf.reduce_sum(weighted_projection, axis=1)
 
         return outputs
-

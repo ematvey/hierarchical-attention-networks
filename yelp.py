@@ -1,12 +1,9 @@
 import os
 import pickle
-from collections import namedtuple
 
-train_dir = os.path.join(os.path.curdir, 'yelp2')
+train_dir = os.path.join(os.path.curdir, 'yelp')
 data_dir = os.path.join(train_dir, 'data')
 
-# trainset_str_fn = os.path.join(data_dir, 'train.str.dataset')
-# devset_str_fn = os.path.join(data_dir, 'dev.str.dataset')
 trainset_fn = os.path.join(data_dir, 'train.dataset')
 devset_fn = os.path.join(data_dir, 'dev.dataset')
 testset_fn = os.path.join(data_dir, 'test.dataset')
@@ -24,7 +21,7 @@ def _read_dataset(fn, epochs=-1):
     if epochs > 0 and c > epochs:
       return
     print('epoch %s' % c)
-    with open(trainset_fn, 'rb') as f:
+    with open(fn, 'rb') as f:
       try:
         while 1:
           x, y = pickle.load(f)
