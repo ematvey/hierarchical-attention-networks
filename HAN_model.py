@@ -98,7 +98,7 @@ class HANClassifierModel():
           shape=[self.vocab_size, self.embedding_size],
           initializer=layers.xavier_initializer(),
           dtype=tf.float32)
-        self.inputs_embedded = layers.embedding_lookup_unique(
+        self.inputs_embedded = tf.nn.embedding_lookup(
           self.embedding_matrix, self.inputs)
 
   def _init_body(self, scope):
