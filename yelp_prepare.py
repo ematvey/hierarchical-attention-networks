@@ -11,7 +11,6 @@ import random
 from tqdm import tqdm
 from collections import defaultdict
 import numpy as np
-import tensorflow as tf
 from yelp import *
 
 en = spacy.load('en')

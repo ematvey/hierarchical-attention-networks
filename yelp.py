@@ -4,6 +4,10 @@ import pickle
 train_dir = os.path.join(os.path.curdir, 'yelp')
 data_dir = os.path.join(train_dir, 'data')
 
+for dir in [train_dir, data_dir]:
+  if not os.path.exists(dir):
+    os.makedirs(dir)
+
 trainset_fn = os.path.join(data_dir, 'train.dataset')
 devset_fn = os.path.join(data_dir, 'dev.dataset')
 testset_fn = os.path.join(data_dir, 'test.dataset')
