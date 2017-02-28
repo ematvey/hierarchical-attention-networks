@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import argparse
 parser = argparse.ArgumentParser()
-parser.add_argument('task')
-parser.add_argument('mode', choices=['train', 'eval'])
+parser.add_argument('--task', default='yelp', choices=['yelp'])
+parser.add_argument('--mode', default='train', choices=['train', 'eval'])
 parser.add_argument('--checkpoint-frequency', type=int, default=100)
 parser.add_argument('--eval-frequency', type=int, default=500)
 parser.add_argument('--batch-size', type=int, default=30)
@@ -28,11 +28,13 @@ from tqdm import tqdm
 import ujson
 from data_util import batch
 
-task = importlib.import_module(args.task)
+task_name = args.task
+
+task = importlib.import_module(task_name)
 
 checkpoint_dir = os.path.join(task.train_dir, 'checkpoint')
 tflog_dir = os.path.join(task.train_dir, 'tflog')
-checkpoint_name = args.task + '-model'
+checkpoint_name = task_name + '-model'
 checkpoint_dir = os.path.join(task.train_dir, 'checkpoints')
 checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
 
@@ -42,7 +44,6 @@ class_weights = pd.Series(Counter([l for _, l in trainset]))
 class_weights = 1/(class_weights/class_weights.mean())
 class_weights = class_weights.to_dict()
 
-devset = task.read_devset()
 vocab = task.read_vocab()
 labels = task.read_labels()
 
@@ -166,7 +167,7 @@ def train():
 
     # Saves a configuration file that TensorBoard will read during startup.
 
-    for i, (x, y) in enumerate(batch_iterator(task.read_trainset(), args.batch_size, 300)):
+    for i, (x, y) in enumerate(batch_iterator(task.read_trainset(epochs=3), args.batch_size, 300)):
       fd = model.get_feed_data(x, y, class_weights=class_weights)
 
       # import IPython
@@ -193,16 +194,14 @@ def train():
         print('checkpoint done')
       if step != 0 and step % args.eval_frequency == 0:
         print('evaluation at step %s' % i)
-        train_df = ev(s, model, trainset)
-        print('train accuracy: %.2f' % (train_df['predictions'] == train_df['labels']).mean())
-        dev_df = ev(s, model, devset)
+        dev_df = ev(s, model, task.read_devset(epochs=1))
         print('dev accuracy: %.2f' % (dev_df['predictions'] == dev_df['labels']).mean())
 
 def main():
   if args.mode == 'train':
     train()
   elif args.mode == 'eval':
-    evaluate(devset)
+    evaluate(task.read_devset(epochs=1))
 
 if __name__ == '__main__':
   main()
