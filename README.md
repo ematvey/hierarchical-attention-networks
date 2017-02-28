@@ -6,5 +6,9 @@ Implementation of document classification model described in [Hierarchical Atten
 Get Yelp review dataset here: https://www.yelp.com/dataset_challenge
 ```
 python3 yelp_prepare.py yelp_academic_dataset_review.json
-python3 worker.py yelp train
+python3 worker.py --mode=train --device=/gpu:0 --batch-size=30
 ```
+
+## Results
+I am getting 65% accuracy on a dev set (16% of data) after 3 epochs. Results reported in the paper are 71% on Yelp'15.
+No systemic hyperparameter optimization was performed.
