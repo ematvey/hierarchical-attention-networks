@@ -82,10 +82,8 @@ def task_specific_attention(inputs, output_size,
                                                   activation_fn=activation_fn,
                                                   scope=scope)
 
-        vector_attn = tf.reduce_sum(tf.multiply(input_projection, attention_context_vector), axis=2)
-        attention_weights_softmax = tf.nn.softmax(vector_attn, dim=1)
-        attention_weights = tf.expand_dims(attention_weights_softmax, axis=-1)
-
+        vector_attn = tf.reduce_sum(tf.multiply(input_projection, attention_context_vector), axis=2, keep_dims=True)
+        attention_weights = tf.nn.softmax(vector_attn, dim=-1)
         weighted_projection = tf.multiply(input_projection, attention_weights)
 
         outputs = tf.reduce_sum(weighted_projection, axis=1)
