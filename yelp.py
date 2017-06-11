@@ -16,7 +16,7 @@ vocab_fn = os.path.join(data_dir, 'vocab.pickle')
 reserved_tokens = 5
 unknown_id = 2
 
-vocab_size = 50000
+vocab_size = 50001
 
 def _read_dataset(fn, review_max_sentences=30, sentence_max_length=30, epochs=1):
   c = 0
