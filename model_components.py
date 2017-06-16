@@ -22,7 +22,7 @@ def bidirectional_rnn(cell_fw, cell_bw, inputs_embedded, input_lengths,
                                             dtype=tf.float32,
                                             swap_memory=True,
                                             scope=scope))
-        outputs = tf.concat((fw_outputs, fw_outputs), 2)
+        outputs = tf.concat((fw_outputs, bw_outputs), 2)
 
         def concatenate_state(fw_state, bw_state):
             if isinstance(fw_state, LSTMStateTuple):
@@ -70,8 +70,7 @@ def task_specific_attention(inputs, output_size,
     Returns:
         outputs: Tensor of shape [batch_size, output_dim].
     """
-    assert len(inputs.get_shape()) == 3 and inputs.get_shape(
-    )[-1].value is not None
+    assert len(inputs.get_shape()) == 3 and inputs.get_shape()[-1].value is not None
 
     with tf.variable_scope(scope or 'attention') as scope:
         attention_context_vector = tf.get_variable(name='attention_context_vector',
