@@ -39,11 +39,11 @@ class LSTMCell(RNNCell):
 
             # hidden = tf.matmul(x, W_xh) + tf.matmul(h, W_hh) + bias
             # improve speed by concat.
-            concat = tf.concat(1, [x, h])
-            W_both = tf.concat(0, [W_xh, W_hh])
+            concat = tf.concat([x, h], 1)
+            W_both = tf.concat([W_xh, W_hh], 0)
             hidden = tf.matmul(concat, W_both) + bias
 
-            i, j, f, o = tf.split(1, 4, hidden)
+            i, j, f, o = tf.split(hidden, 4, axis=1)
 
             new_c = c * tf.sigmoid(f) + tf.sigmoid(i) * tf.tanh(j)
             new_h = tf.tanh(new_c) * tf.sigmoid(o)
