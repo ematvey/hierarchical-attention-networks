@@ -14,7 +14,6 @@ import numpy as np
 from yelp import *
 
 en = spacy.load('en')
-en.pipeline = [en.tagger, en.parser]
 
 def read_reviews():
   with open(args.review_path, 'rb') as f:
